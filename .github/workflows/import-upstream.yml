@@ -1,0 +1,92 @@
+name: Import original Portals and install world selector
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/import-upstream.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portals-source-import
+  cancel-in-progress: false
+
+jobs:
+  import-and-verify:
+    if: github.repository == 'lhc44/ai-portals-world-selector'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout destination repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Fetch original 471-world source
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emollick/ai-portals.git /tmp/ai-portals-upstream
+          test -f /tmp/ai-portals-upstream/LICENSE
+          test -f /tmp/ai-portals-upstream/src/worlds/index.js
+          rsync -a --exclude='.git/' --exclude='.github/' --exclude='README.md' /tmp/ai-portals-upstream/ ./
+
+      - name: Apply verified single-world explorer modifications
+        run: |
+          set -euo pipefail
+          git apply --check .github/patches/world-selector.patch
+          git apply .github/patches/world-selector.patch
+          cat > README.md <<'DOC'
+          # Portals World Selector · 世界漫游
+
+          A fork-style adaptation of [Ethan Mollick's ai-portals](https://github.com/emollick/ai-portals), with its complete 471-world source and assets.
+
+          - **World selector:** 471 thumbnail cards, category filters, search, and sorting
+          - **One world at a time:** no automatic transitions to another random world
+          - **3D exploration:** mouse drag, W/S navigation, A/D side movement, Q/E vertical movement, and a touchscreen D-pad
+          - **Autopilot:** explore the selected route without changing worlds
+          - **Static deployment:** build with Node.js 18+; publish the `dist/` directory
+
+          See [WORLD_SELECTOR_README.md](WORLD_SELECTOR_README.md) for full instructions (中文).
+
+          ## Run locally
+
+          ```bash
+          npm ci
+          npm run build
+          npm run preview
+          ```
+
+          Open http://localhost:8001/
+
+          ## Credits / license
+
+          Original work by Ethan Mollick and AI agents. Source project: [emollick/ai-portals](https://github.com/emollick/ai-portals).
+          License: **CC BY-NC-SA 4.0**. This adaptation retains the original `LICENSE` and `THIRD-PARTY-NOTICES.txt`. Noncommercial use; respect the source and third-party terms.
+          DOC
+
+      - name: Verify source and build
+        run: |
+          set -euo pipefail
+          node --check src/entry.js
+          node --check src/main.js
+          node --check src/core/engine.js
+          node --check src/core/explore.js
+          npm ci --no-audit --no-fund
+          npm run build
+          test -f dist/index.html
+          test -f dist/src/core/explore.js
+          test -f dist/src/entry.js
+          test -f dist/src/ui/world-hub.css
+          test "$(find dist/thumbs -maxdepth 1 -name '*.jpg' | wc -l)" -eq 471
+
+      - name: Commit and publish full source to this repository
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Import 471 worlds and add selectable single-world explorer"
+          git push origin HEAD:main
