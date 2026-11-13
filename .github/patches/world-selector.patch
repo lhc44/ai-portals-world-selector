@@ -1,0 +1,603 @@
+diff --git a/WORLD_SELECTOR_README.md b/WORLD_SELECTOR_README.md
+new file mode 100644
+index 0000000..6d2acfc
+--- /dev/null
++++ b/WORLD_SELECTOR_README.md
+@@ -0,0 +1,47 @@
++# Portals 世界漫游 · 固定世界选择版
++
++本项目基于 Ethan Mollick 的 ai-portals（https://github.com/emollick/ai-portals），保留原有 471 个 3D 世界，并添加一个独立世界选择大厅。
++
++## 功能
++
++- 打开首页：按类别浏览 471 个世界，输入英文名称或描述搜索，支持推荐、名称、奇幻排序。
++- 点击缩略图：固定进入所选世界，不再随机跨越传送门。
++- 世界内容由原版 Three.js 按原定逻辑生成；为保证同一世界多次打开不变，使用世界 ID 产生固定随机种子。
++- 拖动画面环顾；W/S 沿原路线前进后退；A/D 左右偏移；Q/E 上升下降；Shift 加速；滚轮调整速度。
++- 手机上拖动画面旋转视角，用屏幕左下角方向键移动。
++- 顶部“自动巡游”会沿当前世界路线往返，不会进入下一个世界。
++- 点击“返回世界列表”重新挑选；“重置视角”回到当前世界起点。
++
++## 限制
++
++原项目是为“按预设路线飞行”制作的，许多场景缺少场外几何和碰撞体；这里采用限制离开路线的自由观察模式，并不是可在世界任何位置行走的开放世界。部分特殊世界可能有视觉穿模。音频仍可按 S 开启。
++
++## 本地运行
++
++Node.js 18+，在项目根目录运行：
++
++    npm ci
++    npm run build
++    npm run preview
++
++然后打开 http://127.0.0.1:8001/。
++
++## Linux + Nginx 部署
++
++将 dist/ 上传到 /var/www/portals，使用 Nginx 静态目录：
++
++    server {
++        listen 80;
++        server_name YOUR_DOMAIN;
++        root /var/www/portals;
++        index index.html;
++        location / { try_files $uri $uri/ =404; }
++    }
++
++然后自行配置 HTTPS。不要用 Nginx 反向代理到 Node，除非你想使用 Node 预览服务器；正式部署只需要 dist 静态文件。
++
++也可以直接将 dist 上传到 Netlify Deploys 页面，或用于 Cloudflare Pages 的静态部署。
++
++## 版权
++
++源项目采用 CC BY-NC-SA 4.0。仅用于非商业用途；保留作者署名、原仓库 LICENSE 与 THIRD-PARTY-NOTICES.txt。其他第三方素材可能存在额外条款。商业使用须另行处理授权。
+diff --git a/index.html b/index.html
+index 6f8f465..585b7ad 100644
+--- a/index.html
++++ b/index.html
+@@ -3,15 +3,15 @@
+ <head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+-<title>Portals</title>
+-<meta name="description" content="An endless flight through procedurally generated worlds, each one reached through a portal in the last.">
++<title>世界漫游 · WORLD ATLAS</title>
++<meta name="description" content="Explore 471 worlds. Choose a place and stay to explore it.">
+ <!-- link previews: crawlers run no scripts, so these are static; the picture is og.jpg at the site's root (1200 by 630) -->
+ <meta property="og:type" content="website">
+ <meta property="og:site_name" content="Portals">
+ <meta property="og:title" content="Portals">
+ <meta property="og:description" content="An endless, hands-off flight through hundreds of generated worlds, each reached through a portal in the last.">
+-<meta property="og:url" content="https://portals-endless-worlds.netlify.app/">
+-<meta property="og:image" content="https://portals-endless-worlds.netlify.app/og.jpg">
++
++<meta property="og:image" content="./og.jpg">
+ <meta property="og:image:type" content="image/jpeg">
+ <meta property="og:image:width" content="1200">
+ <meta property="og:image:height" content="630">
+@@ -29,6 +29,7 @@
+ <link rel="apple-touch-icon" href="./icons/icon-180.png">
+ <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='%23081020' stroke='%239fd0ff' stroke-width='3'/%3E%3C/svg%3E">
+ <link rel="stylesheet" href="./src/ui/ui.css">
++<link rel="stylesheet" href="./src/ui/world-hub.css">
+ <script type="importmap">
+ { "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }
+ </script>
+@@ -37,6 +38,15 @@
+ <canvas id="view"></canvas>
+ <div id="veil"><div id="veil-title">Portals</div><div id="veil-sub">finding a world</div></div>
+ <div id="title"><div id="title-name"></div><div id="title-line"></div><div id="title-after"></div><div id="title-meta"></div></div>
++<div id="explore-top">
++  <div class="explore-block"><button id="explore-back" class="explore-btn">← 返回世界列表</button><button id="explore-reset" class="explore-btn">↺ 重置视角</button><button id="explore-auto" class="explore-btn" aria-pressed="false">▶ 自动巡游</button></div>
++  <div class="explore-hint">W / S 前进后退 · A / D 左右 · Q / E 升降 · 拖动画面环顾 · Shift 加速 · 滚轮调速</div>
++</div>
++<div id="explore-touch" aria-label="触屏漫游按键">
++  <button class="empty" aria-hidden="true">·</button><button data-move="KeyW" aria-label="前进">↑</button><button data-move="KeyE" aria-label="上升">+</button>
++  <button data-move="KeyA" aria-label="左移">←</button><button data-move="KeyS" aria-label="后退">↓</button><button data-move="KeyD" aria-label="右移">→</button>
++  <button class="empty" aria-hidden="true">·</button><button data-move="KeyQ" aria-label="下降">−</button><button class="empty" aria-hidden="true">·</button>
++</div>
+ <div id="hud">
+   <button id="b-pause" title="Pause (space)" aria-label="Pause">
+     <svg class="i a" viewBox="0 0 16 16"><path d="M5 3v10M11 3v10"/></svg><svg class="i b" viewBox="0 0 16 16"><path d="M5 3l8 5-8 5z" fill="currentColor"/></svg>
+@@ -76,7 +86,7 @@
+   <button id="sh-photo" role="menuitem" title="Save the view as a picture (P)">Save picture</button>
+ </div>
+ <div id="debug"></div>
+-<script type="module" src="./src/main.js"></script>
++<script type="module" src="./src/entry.js"></script>
+ <script nomodule>document.getElementById('veil-sub').textContent = 'this browser is too old to show the worlds';</script>
+ </body>
+ </html>
+diff --git a/src/core/engine.js b/src/core/engine.js
+index fd29e54..5d705b2 100644
+--- a/src/core/engine.js
++++ b/src/core/engine.js
+@@ -1,6 +1,7 @@
+ // Engine: flies the camera through a world, shows the next world through the exit portal,
+ // swaps worlds at the crossing, and keeps doing that forever.
+ import * as THREE from 'three';
++import { Explorer } from './explore.js';
+ import { Post, normalizePost, blendPost, POST_DEFAULTS } from './post.js';
+ import { Portal } from './portal.js';
+ import { installSafeMath } from './safemath.js';
+@@ -70,6 +71,7 @@ export class Engine {
+   constructor(canvas, registry, opts = {}) {
+     this.registry = registry;
+     this.opts = opts;
++    this.explorer = opts.explore ? new Explorer(canvas) : null;
+     this.settings = { speed: 1, strangeness: 0.5, paused: false, ride: 'auto', companion: 'auto', style: 'auto', styleStrength: 1, kinds: null, calmOnly: false, hour: 'any', order: 'new', camera: opts.camera === 'steady' ? 'steady' : 'sweeping' };
+     this.calm = this.settings.camera === 'steady' ? 1 : 0;   // eases toward the setting, so a change mid-flight is a glide and not a jolt
+     this.events = { world: () => {}, status: () => {}, quality: () => {} };
+@@ -518,7 +520,8 @@ export class Engine {
+     const W = await this._load(def, seed);   // if the antechamber cannot be had this rejects with nothing remembered, and the page starts in world 1 as it used to
+     try { await this._postReady; } catch (e) { /* made on first use instead */ }
+     const one = ante ? nextDef : def; if (one) { this.lastId = one.id; this.recent.push(one.id); }
+-    this.cur = W; this.count = ante ? 0 : 1; this.speed = ante ? 2 : W.path.length / W.duration;   // the antechamber's drift starts from near rest
++    this.cur = W; this.count = ante ? 0 : 1; this.speed = ante ? 2 : W.path.length / W.duration;
++    if (this.explorer && !ante) this.explorer.attach(W);   // the antechamber's drift starts from near rest
+     this.extras.enter(W, null); this.style.enter(W);
+     if (ante) this.events.antechamber?.(W); else this.events.world(W, this.count);
+     if (nextDef !== null) this._queueNext(nextDef);
+@@ -823,7 +826,9 @@ export class Engine {
+     if (!cross) this.time += dt;
+     const L = A.path.length, B = this.next && this.next.ready ? this.next : null;
+ 
+-    if (!frozen && !cross) {
++    if (this.explorer && !frozen && !cross) {
++      this.explorer.advance(A, dt);
++    } else if (!frozen && !cross) {
+       let target = (L / A.duration) * this.settings.speed * (this.boost ? (this.gentle ? 2 : 5) : 1);   // hurrying to the portal is gentler on a gentle flight
+       if (A.pace) target *= A.pace(A.dist / L);
+       const remaining = L - A.dist;
+@@ -853,9 +858,14 @@ export class Engine {
+     const calmTo = this.settings.camera === 'steady' || this.settings.calmOnly ? 1 : 0;   // a calm journey always flies with the steady camera
+     this.calm = frozen ? calmTo : this.calm + clamp(calmTo - this.calm, -raw * 0.7, raw * 0.7);
+     this._pose(A, A.dist, cam.position, _q);
+-    if (!this.camInit || frozen) { this.camQuat.copy(_q); this.camInit = true; }
+-    else { this.arrived += dt; this._turn(this.camQuat, _q, dt); }
+-    cam.quaternion.copy(this.camQuat);
++    if (this.explorer && !frozen) {
++      this.explorer.apply(cam, _q);
++      this.camQuat.copy(cam.quaternion); this.camInit = true;
++    } else {
++      if (!this.camInit || frozen) { this.camQuat.copy(_q); this.camInit = true; }
++      else { this.arrived += dt; this._turn(this.camQuat, _q, dt); }
++      cam.quaternion.copy(this.camQuat);
++    }
+ 
+     // a feed world shows the next world itself, so its opening is open as soon as there is a next world
+     const revealT = B ? (A.feed ? 1 : 1 - smoothstep(A.revealDist * 0.6, A.revealDist, remaining)) : 0;
+diff --git a/src/core/explore.js b/src/core/explore.js
+new file mode 100644
+index 0000000..8be5b5c
+--- /dev/null
++++ b/src/core/explore.js
+@@ -0,0 +1,96 @@
++// Single-world, route-guided free exploration.
++// The generated worlds are built around authored flight corridors, not walkable terrain.
++// Constraining translations to a corridor preserves their framing and avoids empty geometry.
++import * as THREE from 'three';
++
++const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
++const right = new THREE.Vector3(), up = new THREE.Vector3();
++const rotation = new THREE.Quaternion();
++const euler = new THREE.Euler(0, 0, 0, 'YXZ');
++
++export class Explorer {
++  constructor(canvas) {
++    this.canvas = canvas;
++    this.keys = new Set();
++    this.yaw = 0; this.pitch = 0; this.lateral = 0; this.vertical = 0;
++    this.auto = false; this.autoDir = 1; this.speedScale = 1;
++    this.dragging = null;
++    this.buttons = [...document.querySelectorAll('[data-move]')];
++    const keyNames = new Set(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ShiftLeft','ShiftRight','ArrowUp','ArrowDown','ArrowLeft','ArrowRight']);
++    window.addEventListener('keydown', e => {
++      if (!keyNames.has(e.code)) return;
++      if (e.target?.closest?.('input, textarea, select, [contenteditable="true"], #atlas, #panel')) return;
++      this.keys.add(e.code);
++      if (e.code.startsWith('Arrow')) e.preventDefault();
++      if (this.auto && !e.code.startsWith('Shift')) this.auto = false;
++    });
++    window.addEventListener('keyup', e => this.keys.delete(e.code));
++    window.addEventListener('blur', () => this.keys.clear());
++    canvas.addEventListener('pointerdown', e => {
++      if (e.button !== 0 || this.dragging != null) return;
++      this.dragging = e.pointerId;
++      this.lastX = e.clientX; this.lastY = e.clientY;
++      canvas.setPointerCapture(e.pointerId);
++    });
++    canvas.addEventListener('pointermove', e => {
++      if (this.dragging !== e.pointerId) return;
++      const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
++      this.lastX = e.clientX; this.lastY = e.clientY;
++      this.yaw = clamp(this.yaw - dx * 0.0034, -Math.PI * 0.98, Math.PI * 0.98);
++      this.pitch = clamp(this.pitch - dy * 0.0034, -1.1, 1.1);
++    });
++    const release = e => { if (e.pointerId === this.dragging) this.dragging = null; };
++    canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
++    for (const b of this.buttons) {
++      const code = b.dataset.move;
++      b.addEventListener('pointerdown', e => {
++        e.preventDefault(); e.stopPropagation();
++        b.setPointerCapture(e.pointerId); this.keys.add(code);
++        this.auto = false;
++      });
++      for (const event of ['pointerup','pointercancel','lostpointercapture']) b.addEventListener(event, () => this.keys.delete(code));
++    }
++    canvas.addEventListener('wheel', e => {
++      if (e.ctrlKey) return;
++      e.preventDefault();
++      this.speedScale = clamp(this.speedScale * (e.deltaY > 0 ? 0.9 : 1.1), 0.3, 4);
++    }, { passive:false });
++  }
++  attach(world) {
++    this.world = world;
++    this.yaw = 0; this.pitch = 0; this.lateral = 0; this.vertical = 0;
++    this.auto = false; this.autoDir = 1;
++    world.dist = world.path.length * 0.12;
++  }
++  reset() { if (this.world) this.attach(this.world); }
++  toggleAuto() { this.auto = !this.auto; this.autoDir = 1; return this.auto; }
++  advance(world, dt) {
++    if (!dt) return;
++    const L = world.path.length;
++    // The viewer may fly backwards, but does not cross either portal into another world.
++    const base = clamp(L / Math.max(20, world.duration), 1.3, 18);
++    const sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
++    const v = base * (sprint ? 2.5 : 1.15) * this.speedScale * dt;
++    const has = (a,b) => this.keys.has(a) || this.keys.has(b);
++    let forward = (has('KeyW','ArrowUp') ? 1 : 0) - (has('KeyS','ArrowDown') ? 1 : 0);
++    if (this.auto) {
++      if (world.dist >= L * 0.87) this.autoDir = -1;
++      if (world.dist <= L * 0.10) this.autoDir = 1;
++      forward = this.autoDir * 0.7;
++    }
++    world.dist = clamp(world.dist + forward * v, L * 0.04, L * 0.92);
++    const corridor = clamp(L * 0.012, 2, 9);
++    const side = (has('KeyD','ArrowRight') ? 1 : 0) - (has('KeyA','ArrowLeft') ? 1 : 0);
++    const rise = (this.keys.has('KeyE') ? 1 : 0) - (this.keys.has('KeyQ') ? 1 : 0);
++    this.lateral = clamp(this.lateral + side * v * 0.65, -corridor, corridor);
++    this.vertical = clamp(this.vertical + rise * v * 0.55, -corridor * 0.6, corridor * 0.6);
++  }
++  apply(camera, baseQuaternion) {
++    right.set(1, 0, 0).applyQuaternion(baseQuaternion);
++    up.set(0, 1, 0).applyQuaternion(baseQuaternion);
++    camera.position.addScaledVector(right, this.lateral).addScaledVector(up, this.vertical);
++    euler.set(this.pitch, this.yaw, 0, 'YXZ');
++    rotation.setFromEuler(euler);
++    camera.quaternion.copy(baseQuaternion).multiply(rotation);
++  }
++}
+\ No newline at end of file
+diff --git a/src/entry.js b/src/entry.js
+new file mode 100644
+index 0000000..502e28b
+--- /dev/null
++++ b/src/entry.js
+@@ -0,0 +1,89 @@
++import { WORLDS } from './worlds/index.js';
++
++// A curated entry, not an extra random world: the 3D engine is loaded only after selection.
++const params = new URLSearchParams(location.search);
++const chosen = params.get('world');
++if (chosen && WORLDS.some(w => w.id === chosen)) {
++  document.body.classList.add('is-exploring');
++  import('./main.js');
++} else {
++  document.body.classList.add('is-hub');
++  document.querySelector('#veil').style.display = 'none';
++  document.title = '世界漫游 · 选择一个世界';
++  const kinds = {
++    all: '全部世界', wilderness: '自然', city: '城市', ocean: '海洋', sky: '天空',
++    interior: '室内', domestic: '生活', alien: '异星', bizarre: '奇幻',
++    prehistoric: '史前', artists: '艺术', books: '文学', screen: '影视',
++  };
++  const shell = document.createElement('div');
++  shell.id = 'world-hub';
++  shell.innerHTML = `
++    <div class="hub-glow"></div>
++    <header class="hub-header"><a href="./" class="hub-brand"><span class="hub-brand-icon">◈</span> WORLD ATLAS <small>世界漫游</small></a>
++      <span class="hub-header-note">探索一处风景 · 不再随机跳转</span>
++    </header>
++    <main>
++      <section class="hub-hero">
++        <div class="hub-eyebrow"><span class="hub-spark"></span> 471 PROCEDURAL WORLDS</div>
++        <h1>世界那么大，<br><em>选一处慢慢探索。</em></h1>
++        <p>从雪山、奇幻城市到星际深处。选定你喜欢的世界，进入原生 3D 场景，自由调整视角，沿着风景路线漫游。不会被自动送往另一个世界。</p>
++        <div class="hub-pills"><span>✦ 3D 实时渲染</span><span>✦ 同一世界探索</span><span>✦ 键鼠 / 触控</span></div>
++      </section>
++      <section class="hub-catalog" aria-label="世界列表">
++        <div class="hub-list-title"><div><span class="hub-small">DISCOVER</span><h2>探索世界 <span id="hub-count"></span></h2></div><div class="hub-actions"><input id="hub-search" type="search" placeholder="搜索世界名称或描述..." aria-label="搜索世界"><select id="hub-sort" aria-label="排序"><option value="featured">精选推荐</option><option value="name">名称 A–Z</option><option value="strange">奇幻优先</option></select></div></div>
++        <div id="hub-tabs" role="group" aria-label="世界分类"></div>
++        <div id="hub-grid"></div><div id="hub-none" hidden>没有找到匹配的世界，试试其他关键词。</div>
++      </section>
++    </main>
++    <footer class="hub-footer">基于 Ethan Mollick 的开源项目 Portals · CC BY-NC-SA 4.0 · 非商业用途</footer>`;
++  document.body.appendChild(shell);
++  const grid = shell.querySelector('#hub-grid'), tabs = shell.querySelector('#hub-tabs'),
++    count = shell.querySelector('#hub-count'), search = shell.querySelector('#hub-search'),
++    sort = shell.querySelector('#hub-sort'), none = shell.querySelector('#hub-none');
++  let selected = 'all';
++  const cat = w => w.category || 'other';
++  const names = new Map([['all', '全部'] , ...Object.entries(kinds).filter(([id]) => id !== 'all').map(([id,name])=>[id,name])]);
++  const present = [...new Set(WORLDS.map(cat))];
++  for (const [id, label] of names) {
++    if (id !== 'all' && !present.includes(id)) continue;
++    const button = document.createElement('button');
++    button.className = 'hub-tab'; button.type = 'button'; button.textContent = label;
++    button.dataset.kind = id;
++    button.onclick = () => { selected = id; paint(); };
++    tabs.appendChild(button);
++  }
++  const grade = w => Number(w.band) || 0;
++  const ordered = [...WORLDS].sort((a,b) => grade(b)-grade(a) || a.name.localeCompare(b.name));
++  function paint() {
++    for (const b of tabs.children) { b.classList.toggle('on',b.dataset.kind === selected); b.setAttribute('aria-pressed',String(b.dataset.kind === selected)); }
++    const term = search.value.toLocaleLowerCase().trim();
++    const filtered = ordered.filter(w => (selected === 'all' || cat(w) === selected) &&
++      (!term || [w.name,w.id,w.line,w.book,w.after,w.screen,w.place].filter(Boolean).join(' ').toLocaleLowerCase().includes(term)));
++    if (sort.value === 'name') filtered.sort((a,b) => a.name.localeCompare(b.name));
++    if (sort.value === 'strange') filtered.sort((a,b) => b.weirdness - a.weirdness || grade(b)-grade(a));
++    count.textContent = `/ ${filtered.length} 个世界`;
++    grid.replaceChildren();
++    none.hidden = !!filtered.length;
++    const frag = document.createDocumentFragment();
++    for (const w of filtered) {
++      const a = document.createElement('a'); a.className = 'hub-card';
++      a.href = '?world=' + encodeURIComponent(w.id) + '&explore=1';
++      const pic = document.createElement('div'); pic.className = 'hub-image';
++      const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async';
++      img.alt = w.name; img.src = './thumbs/' + encodeURIComponent(w.id) + '.jpg';
++      img.onerror = () => img.remove();
++      pic.append(img);
++      const overlay = document.createElement('div'); overlay.className = 'hub-image-overlay';
++      const tag = document.createElement('span'); tag.className = 'hub-category'; tag.textContent = kinds[cat(w)] || cat(w);
++      const go = document.createElement('span'); go.className = 'hub-go'; go.textContent = '进入世界 ↗';
++      overlay.append(tag,go); pic.appendChild(overlay);
++      const body = document.createElement('div'); body.className = 'hub-card-body';
++      const title = document.createElement('h3'); title.textContent = w.name || w.id;
++      const desc = document.createElement('p'); desc.textContent = w.line || '进入这个程序化生成的 3D 世界。';
++      body.append(title, desc); a.append(pic,body); frag.append(a);
++    }
++    grid.append(frag);
++  }
++  search.addEventListener('input',paint); sort.addEventListener('change',paint);
++  paint();
++}
+\ No newline at end of file
+diff --git a/src/main.js b/src/main.js
+index da87a57..8cecaa3 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -21,6 +21,8 @@ function entryFor(id) {
+ async function boot() {
+   const only = q.get('world'), nextId = q.get('next');
+   const freeze = q.has('freeze');
++  const explore = !!only && q.get('explore') !== '0';
++  const stableSeed = only ? [...only].reduce((n,c) => Math.imul(n ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261) : undefined;
+   const defs = only ? [entryFor(only)].concat(nextId ? [entryFor(nextId)] : []) : WORLDS;
+   if (!defs.length) { $('veil-sub').textContent = 'no worlds could be loaded'; window.__shotError = 'no worlds'; return; }
+ 
+@@ -43,19 +45,19 @@ async function boot() {
+     seed: q.has('session') ? num('session') : undefined, seen,
+     tourHours: journey ? journey.hours : null,   // the hour a journey names for a step (design/suites.json hours), ahead of the viewer's own Hour while it lasts
+     tour: journey ? journey.tour.slice() : readTour(q, defs),   // a journey link's worlds (?tour=id1,id2,...), flown in that order before the picker takes over; its first is the opening world (readTour puts it in ?start=)
+-    fixedSeed: q.has('seed') ? num('seed') : undefined,
+-    freeze, single: !!only && !q.has('loop') ? true : false,
++    fixedSeed: q.has('seed') ? num('seed') : (explore ? stableSeed : undefined),
++    freeze, explore, single: !!only && !q.has('loop') ? true : false,
+     pixelRatio: q.has('pr') ? num('pr') : undefined,
+     safeMath: q.get('safe') || undefined,
+     maxDt: q.has('maxdt') ? num('maxdt') : undefined,
+     samples: q.has('aa') ? num('aa') : (freeze ? 0 : undefined),
+-    quality: q.get('quality') || (plain ? 'high' : saved.quality), autoTier: autoTier?.tier,
++    quality: q.get('quality') || (explore ? (saved.quality || 'auto') : (plain ? 'high' : saved.quality)), autoTier: autoTier?.tier,
+     forceReveal: q.has('reveal') ? num('reveal') : undefined,
+     lens: q.has('lens') ? num('lens') : undefined,
+     dewash: q.has('dewash') ? num('dewash') : undefined,
+     portalStyle: q.get('portalstyle') || undefined,
+     // compile logs are read back on test pages and when asked for (?checks=1); on the live page that read makes each new program wait
+-    checkShaders: plain || q.has('checks') || q.has('debug'),
++    checkShaders: !explore && (plain || q.has('checks') || q.has('debug')),
+     prepare: q.get('prep') === '0' ? false : undefined,
+     provoking: q.get('pv') === '0' ? false : undefined,   // ?pv=0: flat varyings from the last corner, for comparison
+     // a steady camera for anyone the swooping would make queasy: asked for in the link, chosen before, or the system's own
+@@ -378,8 +380,19 @@ async function boot() {
+   if (aboutOn) { $('about-row').hidden = false; $('b-about').onclick = about; }
+   // the index of worlds (its button on the bar, I, #worlds, or hold the options button). It marks the worlds seen (not on a journey link, which keeps no memory) and the favourites.
+   const atlas = setupAtlas({ worlds: WORLDS, suites: SUITES, engine, setPaused, optionsButton: $('b-more'), onReport: () => report(), seen, hearts, onHeart: (id) => heart(id, false), onAbout: aboutOn ? about : null });
+-  $('b-worlds').onclick = () => atlas.toggle();   // the gallery button on the bar
+-  $('b-next').onclick = () => engine.skip();
++  $('b-worlds').onclick = () => explore ? location.assign(location.pathname) : atlas.toggle();
++  $('b-next').onclick = () => { if (!explore) engine.skip(); };
++  if (explore) {
++    // Exit returns to the world list, without starting another random world.
++    $('explore-back').onclick = () => location.assign(location.pathname);
++    $('explore-reset').onclick = () => { engine.explorer.reset(); toast('已回到这处世界的起点'); };
++    const auto = $('explore-auto');
++    const renderAuto = () => { auto.textContent = engine.explorer.auto ? '⏸ 关闭自动巡游' : '▶ 自动巡游'; auto.setAttribute('aria-pressed', String(engine.explorer.auto)); };
++    auto.onclick = () => { engine.explorer.toggleAuto(); renderAuto(); };
++    renderAuto();
++    $('title-meta').textContent = '当前世界 · 自由探索';
++    toast('W/S 前后 · A/D 平移 · Q/E 升降 · 拖动画面环顾', 6500);
++  }
+   const photo = () => {
+     engine.frame(0);
+     // the caption: the frame is copied to a 2D canvas now, in the task that drew it, and a quiet strip with the world's
+@@ -435,7 +448,7 @@ async function boot() {
+     if (e.key === 'Escape') { if (!share.hidden) shareMenu(false); else if (!$('panel').hidden) more(); if (t && t.blur && t !== document.body) t.blur(); return; }
+     if (tag === 'SELECT' || tag === 'TEXTAREA' || (tag === 'INPUT' && !slider) || (slider && e.code.startsWith('Arrow'))) return;
+     if (tag === 'BUTTON' && t.closest('#panel, #share') && (e.code === 'Space' || e.key === 'Enter')) return;   // space presses the focused button of the options, it does not pause as well
+-    if (e.key === 'i' || e.key === 'I') atlas.open();
++    if (e.key === 'i' || e.key === 'I') { if (explore) location.assign(location.pathname); else atlas.open(); }
+     else if (e.key === 'h' || e.key === 'H') heart();
+     else if (e.code === 'Space') { e.preventDefault(); setPaused(!engine.settings.paused); }
+     else if (e.key === 'f' || e.key === 'F') full();
+@@ -444,11 +457,11 @@ async function boot() {
+     else if (e.key === 'o' || e.key === 'O') more();
+     else if (e.key === 'c' || e.key === 'C' || e.key === 'g' || e.key === 'G') setCamera(engine.settings.camera === 'steady' ? 'sweeping' : 'steady', true);
+     else if (e.key === 'r' || e.key === 'R') report();
+-    else if (e.code === 'ArrowRight') engine.skip();
+-    else if (e.key === 'd' || e.key === 'D') { const d = $('debug'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; }
++    else if (e.code === 'ArrowRight' && !explore) engine.skip();
++    else if (!explore && (e.key === 'd' || e.key === 'D')) { const d = $('debug'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; }
+   });
+   if (q.has('debug')) $('debug').style.display = 'block';
+   setInterval(() => { const d = $('debug'); if (d.style.display === 'block') d.textContent = JSON.stringify(engine.stats, null, 1); window.__stats = engine.stats; }, 500);
+ }
+ 
+-boot().catch((e) => { console.error(e); window.__shotError = String(e && e.stack || e); document.getElementById('veil-sub').textContent = 'something went wrong starting up'; });
++boot().catch((e) => { console.error(e); window.__shotError = String(e && e.stack || e); document.getElementById('veil-sub').textContent = /webgl/i.test(String(e)) ? '当前浏览器不支持 WebGL，请启用硬件加速或换用支持 WebGL 的设备' : '场景加载失败，请返回世界列表重试'; });
+diff --git a/src/ui/atlas.js b/src/ui/atlas.js
+index 31e2300..cf912fd 100644
+--- a/src/ui/atlas.js
++++ b/src/ui/atlas.js
+@@ -29,7 +29,7 @@ export function setupAtlas({ worlds, suites = [], engine, setPaused, optionsButt
+   const nKept = () => list.filter(kept).length, nSeen = () => list.filter(was).length;
+ 
+   const tile = (w) => {
+-    const a = el('a', 'atlas-card'); a.href = '?start=' + encodeURIComponent(w.id);
++    const a = el('a', 'atlas-card'); a.href = '?world=' + encodeURIComponent(w.id) + '&explore=1';
+     const pic = el('div', 'atlas-pic');
+     // until its picture arrives (or if it has none) a card shows the mood of the world's palette
+     const [lum, warm] = w.tone || [0.4, 0];
+@@ -180,7 +180,7 @@ export function setupAtlas({ worlds, suites = [], engine, setPaused, optionsButt
+     if (onAbout) { const b = el('button', 'atlas-about', 'About'); b.type = 'button'; b.onclick = () => onAbout(); head.appendChild(b); }
+     head.appendChild(x);
+     grid = el('div', 'atlas-body');
+-    const foot = el('p', 'atlas-foot', 'Choosing a world starts the journey there. It carries on through the portals as usual. ');
++    const foot = el('p', 'atlas-foot', '选择世界后会在该场景内自由漫游，不再随机穿越到下一个世界。 ');
+     if (onReport) { const b = el('button', 'atlas-report', 'Copy performance report'); b.type = 'button'; b.onclick = () => onReport(); foot.appendChild(b); }
+     root.append(head, grid, foot);
+     document.body.appendChild(root);
+diff --git a/src/ui/share.js b/src/ui/share.js
+index 8f5af7a..3d8d3f9 100644
+--- a/src/ui/share.js
++++ b/src/ui/share.js
+@@ -2,7 +2,7 @@
+ // main.js wires these to the bar and the options; the gallery (atlas.js) is handed the favourites and the seen list.
+ // tools/build-deploy.mjs writes the page behind a world link (w/<id>/index.html) and copies og.jpg.
+ 
+-export const SITE = 'https://portals-endless-worlds.netlify.app';   // printed on saved pictures; the tags in index.html carry it too
++export const SITE = location.origin + location.pathname.replace(/[^/]*$/, '');   // printed on saved pictures; the tags in index.html carry it too
+ 
+ // ---------- the About ----------
+ // The text is the site's public statement of who made it: a release does not reword it.
+@@ -109,7 +109,7 @@ export function worldLink(id, loc = location) {
+   const dir = loc.origin + loc.pathname.replace(/[^/]*$/, '');
+   if (!id) return dir;
+   const local = loc.protocol === 'file:' || /^(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.)/.test(loc.hostname);
+-  return local ? dir + '?start=' + encodeURIComponent(id) : dir + 'w/' + encodeURIComponent(id) + '/';
++  return dir + '?world=' + encodeURIComponent(id) + '&explore=1';
+ }
+ 
+ // A link that replays this sitting: its session number (every world's seed comes from it), the worlds flown so far
+diff --git a/src/ui/world-hub.css b/src/ui/world-hub.css
+new file mode 100644
+index 0000000..bbf8bb6
+--- /dev/null
++++ b/src/ui/world-hub.css
+@@ -0,0 +1,62 @@
++/* World Atlas — custom non-random landing and single-world exploration */
++body.is-hub { overflow: auto; min-height: 100%; background:#070b12; cursor: auto !important; }
++body.is-hub #view, body.is-hub #hud, body.is-hub #panel, body.is-hub #title, body.is-hub #share {display:none !important}
++#world-hub { min-height:100vh; color:#f3f4f1; font: 400 14px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; position:relative; overflow:hidden; }
++.hub-glow {position:absolute;top:-380px;left:12%;width:850px;height:850px;pointer-events:none;border-radius:100%;background:radial-gradient(circle,rgba(62,99,111,.19),transparent 65%)}
++.hub-header {position:relative; z-index:1; max-width:1390px; margin:auto; padding:26px clamp(24px,5vw,75px); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,.07)}
++.hub-brand {text-decoration:none; color:#f6f1eb; font-size:14px; font-weight:750; letter-spacing:.20em; display:flex; align-items:center; gap:13px}
++.hub-brand small {font-size:11px; letter-spacing:.18em; color:#a9b3b8; font-weight:400; margin-left:6px}
++.hub-brand-icon {width:31px;height:31px;border:1px solid #7fadae;border-radius:50%;display:grid;place-items:center;color:#b7dedc;font-size:22px;font-weight:300}
++.hub-header-note {font-size:11px;color:#82949c;letter-spacing:.10em}
++#world-hub main{max-width:1390px;margin:auto;padding:0 clamp(24px,5vw,75px)}
++.hub-hero{padding:88px 0 88px;max-width:820px;position:relative}
++.hub-eyebrow,.hub-small{font-size:11px; letter-spacing:.24em; color:#9ec8ca; font-weight:650}
++.hub-spark{display:inline-block;width:6px;height:6px;box-shadow:0 0 18px #c8f3db;background:#b9e5cb;border-radius:50%;vertical-align:middle;margin-right:12px}
++.hub-hero h1{font-family:"Iowan Old Style",Georgia,serif;font-size:clamp(44px,5.6vw,82px);line-height:1.20;letter-spacing:-.035em;font-weight:400;margin:26px 0}
++.hub-hero h1 em{font-style:normal;color:#9cc7be}
++.hub-hero p{color:#9ba9b4;font-size:15px;line-height:1.95;max-width:610px;margin:0}
++.hub-pills{display:flex;gap:14px;flex-wrap:wrap;margin-top:29px}
++.hub-pills span{color:#afbec2;background:rgba(255,255,255,.034);border:1px solid rgba(255,255,255,.08);border-radius:99px;padding:7px 13px;font-size:12px}
++.hub-catalog{padding-bottom:84px}
++.hub-list-title{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;border-top:1px solid rgba(255,255,255,.12);padding-top:30px}
++.hub-list-title h2{font-size:29px;letter-spacing:-.025em;font-weight:560;margin:7px 0 0}
++#hub-count{font-size:13px;color:#7e909d;font-weight:400;margin-left:6px}
++.hub-actions{display:flex;gap:10px}
++.hub-actions input,.hub-actions select{background:#101821;border:1px solid #25333e;color:#e7eeee;border-radius:10px;padding:12px 15px;font:13px system-ui;outline:none}
++.hub-actions input{min-width:280px}
++.hub-actions input:focus,.hub-actions select:focus{border-color:#85bdbb}
++#hub-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:27px 0}
++.hub-tab{padding:9px 17px;border:1px solid #24313a;border-radius:50px;background:transparent;color:#9eaab5;cursor:pointer;transition:.2s}
++.hub-tab:hover{border-color:#75989c;color:#e9f5f2}
++.hub-tab.on{background:#d4e7df;border-color:#d4e7df;color:#14272d;font-weight:650}
++#hub-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:19px}
++.hub-card{overflow:hidden;color:#f2f4f2;text-decoration:none;border:1px solid #25313b;background:#101821;border-radius:16px;transition:border-color .2s,transform .2s,box-shadow .2s}
++.hub-card:hover,.hub-card:focus-visible{transform:translateY(-4px);border-color:#688b8b;box-shadow:0 18px 40px rgba(0,0,0,.3)}
++.hub-image{height:auto;aspect-ratio:16/9;overflow:hidden;position:relative;background:linear-gradient(125deg,#172b32,#252a35 48%,#182e32)}
++.hub-image img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .4s}
++.hub-card:hover img{transform:scale(1.045)}
++.hub-image-overlay{position:absolute;inset:auto 0 0;padding:20px 14px 12px;display:flex;justify-content:space-between;align-items:end;background:linear-gradient(transparent,rgba(3,8,14,.85));gap:10px}
++.hub-category{border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.18);border-radius:6px;padding:3px 8px;font-size:10px;letter-spacing:.08em}
++.hub-go{font-size:11px;color:#d6f3e9;opacity:0;transform:translateY(4px);transition:.2s}
++.hub-card:hover .hub-go{opacity:1;transform:none}
++.hub-card-body{padding:17px 17px 22px}
++.hub-card h3{font-size:15px;font-weight:570;margin:0 0 8px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
++.hub-card p{font-size:12px;line-height:1.65;color:#8798a4;height:3.3em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0}
++#hub-none{color:#adbcc4;padding:70px 0;text-align:center}
++.hub-footer{text-align:center;color:#687782;font-size:11px;letter-spacing:.03em;border-top:1px solid rgba(255,255,255,.08);padding:25px}
++#explore-top{display:none}
++body.is-exploring #explore-top{display:flex;position:fixed;top:20px;left:20px;right:20px;z-index:8;pointer-events:none;align-items:flex-start;justify-content:space-between;gap:12px;font:12px/1.4 system-ui}
++.explore-block{display:flex;gap:7px;pointer-events:auto;align-items:center;flex-wrap:wrap}
++.explore-btn{cursor:pointer;color:#f0f9f7;border:1px solid rgba(207,240,231,.25);background:rgba(11,20,28,.72);backdrop-filter:blur(18px);border-radius:11px;padding:11px 15px;font:12px system-ui;box-shadow:0 5px 20px rgba(0,0,0,.2)}
++.explore-btn:hover{border-color:#bae5df;background:rgba(31,55,61,.9)}
++.explore-hint{background:rgba(11,20,28,.58);border:1px solid rgba(207,240,231,.12);border-radius:12px;color:#d9e6e5;padding:11px 15px;max-width:390px}
++body.is-exploring #b-next,body.is-exploring #l-strange,body.is-exploring #l-speed{display:none!important}
++body.is-exploring #title{bottom:95px}
++#explore-touch{display:none}
++@media (max-width:1100px){#hub-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
++@media (max-width:770px){.hub-header-note{display:none}.hub-hero{padding:70px 0}.hub-list-title{display:block}.hub-actions{margin-top:20px}.hub-actions input{min-width:0;flex:1}#hub-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.hub-card-body{padding:13px}.hub-card h3{font-size:13px}.hub-card p{font-size:11px}.explore-hint{display:none}}
++@media (max-width:475px){#world-hub main{padding:0 16px}.hub-header{padding:20px 16px}.hub-hero{padding:54px 0}.hub-hero h1{font-size:42px}.hub-hero p{font-size:13px}.hub-actions select{max-width:118px}.hub-actions input{width:0}#hub-tabs{flex-wrap:nowrap;overflow-x:auto;margin-right:-16px;padding-bottom:8px}#hub-tabs .hub-tab{flex:0 0 auto}.hub-card-body{padding:10px}.hub-card h3{font-size:12px}.hub-card p{font-size:10px}.hub-card{border-radius:10px}.hub-image-overlay{padding:8px}.hub-category{font-size:9px}.hub-go{display:none}body.is-exploring #explore-top{top:9px;left:9px;right:9px}.explore-btn{padding:9px;font-size:11px}body.is-exploring #hud{bottom:8px!important}}
++@media (pointer:coarse){body.is-exploring #explore-touch{display:grid;position:fixed;left:12px;bottom:95px;z-index:6;grid-template-columns:repeat(3,48px);gap:6px;touch-action:none;pointer-events:auto}#explore-touch button{touch-action:none;user-select:none;background:rgba(8,18,26,.66);border:1px solid rgba(221,246,240,.35);border-radius:12px;color:#fff;font-size:19px;min-width:48px;min-height:48px}#explore-touch .empty{visibility:hidden}body.is-exploring #title{bottom:180px}}
++@media (prefers-reduced-motion:reduce){.hub-card,.hub-image img{transition:none}}
++
++body.is-exploring #b-link{display:none}
+diff --git a/tools/build-deploy.mjs b/tools/build-deploy.mjs
+index 9611cd3..f4de1c4 100644
+--- a/tools/build-deploy.mjs
++++ b/tools/build-deploy.mjs
+@@ -14,7 +14,7 @@ fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out, { recursive:
+ const reg = fs.readFileSync(path.join(root, 'src/worlds/index.js'), 'utf8');
+ const worldFiles = [...reg.matchAll(/import\('\.\/([^']+)'\)/g)].map((m) => m[1]);
+ // follow static and dynamic relative imports from main.js and every shipped world
+-const seen = new Set(), queue = ['src/main.js', ...worldFiles.map((f) => 'src/worlds/' + f)], bare = new Set();
++const seen = new Set(), queue = ['src/entry.js', 'src/main.js', ...worldFiles.map((f) => 'src/worlds/' + f)], bare = new Set();
+ while (queue.length) {
+   const rel = queue.pop(); if (seen.has(rel)) continue; seen.add(rel);
+   const src = fs.readFileSync(path.join(root, rel), 'utf8');
+@@ -41,6 +41,8 @@ for (const rel of [...seen, ...vseen]) {
+ }
+ fs.mkdirSync(path.join(out, 'src/ui'), { recursive: true });
+ fs.copyFileSync(path.join(root, 'src/ui/ui.css'), path.join(out, 'src/ui/ui.css'));
++fs.copyFileSync(path.join(root, 'src/ui/world-hub.css'), path.join(out, 'src/ui/world-hub.css'));
++fs.copyFileSync(path.join(root, 'LICENSE'), path.join(out, 'LICENSE'));
+ // home-screen install: the manifest and its icons
+ fs.copyFileSync(path.join(root, 'manifest.webmanifest'), path.join(out, 'manifest.webmanifest'));
+ fs.cpSync(path.join(root, 'icons'), path.join(out, 'icons'), { recursive: true });
+@@ -69,7 +71,7 @@ const hasText = (id) => typeof textOf[id] === 'string' && textOf[id].trim().leng
+   if (have < ids.length) console.log('WORLDS WITHOUT A PICTURE: ' + ids.filter((id) => !fs.existsSync(path.join(root, 'thumbs', id + '.jpg'))).join(', '));
+ }
+ const stamp = String(args.includes('--stamp') ? args[args.indexOf('--stamp') + 1] : fs.statSync(path.join(root, 'src/worlds/index.js')).mtimeMs / 1000 | 0);
+-fs.writeFileSync(path.join(out, 'index.html'), fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace('./src/main.js', './src/main.js?v=' + stamp).replace('./src/ui/ui.css', './src/ui/ui.css?v=' + stamp));
++fs.writeFileSync(path.join(out, 'index.html'), fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace('./src/entry.js', './src/entry.js?v=' + stamp).replace('./src/ui/ui.css', './src/ui/ui.css?v=' + stamp).replace('./src/ui/world-hub.css', './src/ui/world-hub.css?v=' + stamp));
+ fs.writeFileSync(path.join(out, 'netlify.toml'), `[build]\n  publish = "."\n  command = "echo static site"\n\n[[headers]]\n  for = "/manifest.webmanifest"\n  [headers.values]\n    Content-Type = "application/manifest+json"\n\n[[headers]]\n  for = "/vendor/*"\n  [headers.values]\n    Cache-Control = "public, max-age=31536000, immutable"\n\n[[headers]]\n  for = "/src/*"\n  [headers.values]\n    Cache-Control = "public, max-age=0, must-revalidate"\n`);
+ // Sharing: the picture a pasted link shows (og.jpg, named by the tags in index.html) and one small page per world at
+ // w/<id>/, so that a link to a world previews as that world. Crawlers run no scripts, so the tags must sit in a file;
+@@ -86,7 +88,7 @@ fs.writeFileSync(path.join(out, 'netlify.toml'), `[build]\n  publish = "."\n  co
+     const name = w.name || w.id, by = w.after ? 'after ' + w.after.split(',')[0].trim() : w.book ? 'inspired by ' + w.book + (w.author ? ' by ' + w.author.split(/\s*,\s*and\s+/).map((a) => a.split(',')[0].trim()).filter(Boolean).join(' and ') : '') : w.screen ? 'inspired by the ' + (w.screenKind === 'series' ? 'series' : 'film') + ' ' + w.screen + (w.screenYear ? ' (' + w.screenYear + ')' : '') : w.music ? 'inspired by the ' + (w.musicKind === 'song' ? 'song' : 'album') + ' ' + w.music + (w.musicYear ? ' (' + w.musicYear + ')' : '') + (w.musicBy ? ' by ' + w.musicBy : '') : '';
+     const desc =`${name}${by ? ', ' + by : ''}${w.line ? '. ' + w.line.replace(/\.$/, '') + '. One' : ', one'} of the ${entries.length} worlds of Portals: an endless flight through generated worlds, each reached through a portal in the last.`;
+     const thumb = fs.existsSync(path.join(out, 'thumbs', w.id + '.jpg')), pic = thumb ? `${SITE}/thumbs/${w.id}.jpg` : `${SITE}/og.jpg`, [pw, ph] = thumb ? [480, 270] : [1200, 630];
+-    const to = '../../?start=' + encodeURIComponent(w.id), t = esc(name + ' · Portals'), d = esc(desc);
++    const to = '../../?world=' + encodeURIComponent(w.id) + '&explore=1', t = esc(name + ' · Portals'), d = esc(desc);
+     const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${t}</title>\n<meta name="description" content="${d}">\n`
+       + `<meta property="og:type" content="website">\n<meta property="og:site_name" content="Portals">\n<meta property="og:title" content="${t}">\n<meta property="og:description" content="${d}">\n<meta property="og:url" content="${SITE}/w/${w.id}/">\n`
+       + `<meta property="og:image" content="${pic}">\n<meta property="og:image:type" content="image/jpeg">\n<meta property="og:image:width" content="${pw}">\n<meta property="og:image:height" content="${ph}">\n`
