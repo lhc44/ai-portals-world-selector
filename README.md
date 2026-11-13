@@ -1,7 +1,26 @@
-# Portals 世界漫游 · 单世界探索版
+# Portals World Selector · 世界漫游
 
-基于 [emollick/ai-portals](https://github.com/emollick/ai-portals)（CC BY-NC-SA 4.0）。
+A fork-style adaptation of [Ethan Mollick's ai-portals](https://github.com/emollick/ai-portals), with its complete 471-world source and assets.
 
-此仓库正在导入原项目的 471 个世界和定制的世界选择、固定场景漫游功能。完成后会包含完整源码、资源和构建说明。
+- **World selector:** 471 thumbnail cards, category filters, search, and sorting
+- **One world at a time:** no automatic transitions to another random world
+- **3D exploration:** mouse drag, W/S navigation, A/D side movement, Q/E vertical movement, and a touchscreen D-pad
+- **Autopilot:** explore the selected route without changing worlds
+- **Static deployment:** build with Node.js 18+; publish the `dist/` directory
 
-> 项目改动说明见 `WORLD_SELECTOR_README.md`。
+See [WORLD_SELECTOR_README.md](WORLD_SELECTOR_README.md) for full instructions (中文).
+
+## Run locally
+
+```bash
+npm ci
+npm run build
+npm run preview
+```
+
+Open http://localhost:8001/
+
+## Credits / license
+
+Original work by Ethan Mollick and AI agents. Source project: [emollick/ai-portals](https://github.com/emollick/ai-portals).
+License: **CC BY-NC-SA 4.0**. This adaptation retains the original `LICENSE` and `THIRD-PARTY-NOTICES.txt`. Noncommercial use; respect the source and third-party terms.
