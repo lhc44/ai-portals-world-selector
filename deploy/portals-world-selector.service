@@ -1,0 +1,20 @@
+[Unit]
+Description=Portals World Selector (static web on port 6868)
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nobody
+WorkingDirectory=/opt/ai-portals-world-selector/dist
+ExecStart=/usr/bin/python3 /opt/ai-portals-world-selector/http-server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
